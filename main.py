@@ -36,7 +36,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 
 def app_dir() -> str:
