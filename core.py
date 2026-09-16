@@ -76,6 +76,10 @@ class DownloadConfig:
     playlist_mode: bool = False  # False = только одно видео (noplaylist=True)
     custom_args: str = ""  # сырая строка CLI-аргументов yt-dlp
     ffmpeg_location: Optional[str] = None  # путь к папке с ffmpeg.exe или к самому exe
+    
+    # Аутентификация YouTube
+    cookies_from_browser: Optional[str] = None  # "chrome" или "chrome:profile"
+    cookies_file: Optional[str] = None  # путь к cookies.txt
 
 
 @dataclass
@@ -485,6 +489,20 @@ def build_ydl_opts(
     if "--no-playlist" not in (cfg.custom_args or "") and "--yes-playlist" not in (cfg.custom_args or ""):
         ydl_opts["noplaylist"] = noplaylist_gui
 
+    # --- Аутентификация YouTube (куки) ---
+    # Приоритет: явные поля DownloadConfig > кастомные аргументы
+    if cfg.cookies_from_browser:
+        # Форматируем как кортеж для yt-dlp 2025+
+        if ":" in cfg.cookies_from_browser:
+            parts = cfg.cookies_from_browser.split(":", 1)
+            browser_name = parts[0]
+            profile_name = parts[1] if len(parts) > 1 else None
+            ydl_opts["cookiesfrombrowser"] = (browser_name, profile_name) if profile_name else (browser_name,)
+        else:
+            ydl_opts["cookiesfrombrowser"] = (cfg.cookies_from_browser,)
+    elif cfg.cookies_file and os.path.isfile(cfg.cookies_file):
+        ydl_opts["cookies"] = cfg.cookies_file
+
     return ydl_opts
 
 
@@ -492,11 +510,16 @@ def build_ydl_opts(
 # Получение информации (быстрый двухэтапный парсинг)
 # ---------------------------------------------------------------------------
 def fetch_info_sync(url: str, playlist_mode: bool = False,
-                    ffmpeg_location: Optional[str] = None) -> VideoInfo:
+                    ffmpeg_location: Optional[str] = None,
+                    cookies_from_browser: Optional[str] = None,
+                    cookies_file: Optional[str] = None) -> VideoInfo:
     """Блокирующий вызов. Выполнять ТОЛЬКО в фоновом потоке.
 
     Этап 1: extract_info(process=False) — быстрый, определяет тип.
     Этап 2: process_ie_result — догружает title/duration для видео.
+    
+    :param cookies_from_browser: строка вида "chrome" или "chrome:profile"
+    :param cookies_file: путь к файлу cookies.txt
     """
     base_opts: Dict[str, Any] = {
         "quiet": True,
@@ -510,6 +533,19 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         fp = find_ffmpeg(ffmpeg_location)
         if fp:
             base_opts["ffmpeg_location"] = fp
+    
+    # Добавляем поддержку аутентификации
+    if cookies_from_browser:
+        # В новых версиях yt-dlp требуется кортеж: (browser_name, profile_name, keyring, container)
+        if ":" in cookies_from_browser:
+            parts = cookies_from_browser.split(":", 1)
+            browser_name = parts[0]
+            profile_name = parts[1] if len(parts) > 1 else None
+            base_opts["cookiesfrombrowser"] = (browser_name, profile_name) if profile_name else (browser_name,)
+        else:
+            base_opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    elif cookies_file and os.path.isfile(cookies_file):
+        base_opts["cookies"] = cookies_file
 
     with yt_dlp.YoutubeDL(base_opts) as ydl:
         # Этап 1 — лёгкий
@@ -588,6 +624,8 @@ class InfoWorker(threading.Thread):
         urls: List[str],
         playlist_mode: bool = False,
         ffmpeg_location: Optional[str] = None,
+        cookies_from_browser: Optional[str] = None,
+        cookies_file: Optional[str] = None,
         on_info: Optional[InfoCallback] = None,
         on_error: Optional[ErrorCallback] = None,
         on_done: Optional[Callable[[], None]] = None,
@@ -596,6 +634,8 @@ class InfoWorker(threading.Thread):
         self._urls = urls
         self._playlist_mode = playlist_mode
         self._ffmpeg_location = ffmpeg_location
+        self._cookies_from_browser = cookies_from_browser
+        self._cookies_file = cookies_file
         self._on_info = on_info
         self._on_error = on_error
         self._on_done = on_done
@@ -604,7 +644,13 @@ class InfoWorker(threading.Thread):
         try:
             for url in self._urls:
                 try:
-                    vi = fetch_info_sync(url, self._playlist_mode, self._ffmpeg_location)
+                    vi = fetch_info_sync(
+                        url, 
+                        self._playlist_mode, 
+                        self._ffmpeg_location,
+                        self._cookies_from_browser,
+                        self._cookies_file,
+                    )
                     if self._on_info:
                         self._on_info({
                             "url": vi.url,

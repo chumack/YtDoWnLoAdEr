@@ -168,6 +168,10 @@ class App(ctk.CTk):
         self.url_text = ctk.CTkTextbox(url_box, height=70)
         self.url_text.grid(row=1, column=0, sticky="ew", padx=12, pady=2)
         self.url_text.insert("1.0", "")
+        
+        # Контекстное меню для правой кнопки мыши
+        self._create_context_menu()
+        self.url_text.bind("<Button-3>", self._show_context_menu)
 
         btn_row = ctk.CTkFrame(url_box, fg_color="transparent")
         btn_row.grid(row=2, column=0, sticky="ew", padx=12, pady=(2, 8))
@@ -240,6 +244,43 @@ class App(ctk.CTk):
             anchor="w", padx=10, pady=2)
         ctk.CTkCheckBox(right, text="✂️ SponsorBlock (вырезать рекламу)",
                         variable=self.sponsor_var).pack(anchor="w", padx=10, pady=2)
+        
+        # --- Аутентификация YouTube ---
+        auth_frame = ctk.CTkFrame(right, fg_color="#2B2B2B")
+        auth_frame.pack(fill="x", padx=10, pady=(8, 2))
+        ctk.CTkLabel(auth_frame, text="🔐 YouTube Login", font=ctk.CTkFont(weight="bold", size=11)).pack(
+            anchor="w", padx=8, pady=(6, 4))
+        
+        self.auth_method_var = tk.StringVar(value="none")
+        method_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
+        method_frame.pack(fill="x", padx=8, pady=2)
+        ctk.CTkRadioButton(method_frame, text="Нет", variable=self.auth_method_var, 
+                          value="none", command=self._toggle_auth_fields).pack(anchor="w", padx=4)
+        ctk.CTkRadioButton(method_frame, text="Из браузера", variable=self.auth_method_var,
+                          value="browser", command=self._toggle_auth_fields).pack(anchor="w", padx=4)
+        ctk.CTkRadioButton(method_frame, text="Файл cookies.txt", variable=self.auth_method_var,
+                          value="file", command=self._toggle_auth_fields).pack(anchor="w", padx=4)
+        
+        self.browser_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
+        self.browser_frame.pack(fill="x", padx=8, pady=4)
+        ctk.CTkLabel(self.browser_frame, text="Браузер:").pack(side="left", padx=(4, 6))
+        self.browser_menu = ctk.CTkOptionMenu(self.browser_frame, values=[
+            "chrome", "firefox", "edge", "brave", "chromium", "safari"
+        ], width=120)
+        self.browser_menu.set("chrome")
+        self.browser_menu.pack(side="left", padx=4)
+        self.browser_profile_entry = ctk.CTkEntry(self.browser_frame, placeholder_text="Профиль (опционально)", width=150)
+        self.browser_profile_entry.pack(side="left", padx=4)
+        
+        self.cookies_file_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
+        self.cookies_file_frame.pack(fill="x", padx=8, pady=4)
+        self.cookies_file_entry = ctk.CTkEntry(self.cookies_file_frame, placeholder_text="Путь к cookies.txt")
+        self.cookies_file_entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        ctk.CTkButton(self.cookies_file_frame, text="…", width=30,
+                      command=self._on_browse_cookies).pack(side="left", padx=4)
+        
+        self._toggle_auth_fields()  # Инициализация видимости
+        
         ff_row = ctk.CTkFrame(right, fg_color="transparent")
         ff_row.pack(fill="x", padx=10, pady=(4, 10))
         ff_row.grid_columnconfigure(0, weight=1)
@@ -294,8 +335,33 @@ class App(ctk.CTk):
 
     # ============================ конфиг ============================
     def _collect_config(self) -> DownloadConfig:
+        """Собрать текущие настройки GUI в DownloadConfig для передачи в ядро."""
         display = self.format_menu.get()
         core_fmt = DISPLAY_TO_CORE.get(display, "best")
+        
+        # Собираем настройки аутентификации YouTube
+        auth_method = self.auth_method_var.get()
+        extra_args = []
+        
+        if auth_method == "browser":
+            browser = self.browser_menu.get()
+            profile = self.browser_profile_entry.get().strip()
+            if profile:
+                extra_args.append(f"--cookies-from-browser {browser}:{profile}")
+            else:
+                extra_args.append(f"--cookies-from-browser {browser}")
+        elif auth_method == "file":
+            cookies_file = self.cookies_file_entry.get().strip()
+            if cookies_file and os.path.isfile(cookies_file):
+                extra_args.append(f'--cookies "{cookies_file}"')
+            elif cookies_file:
+                self._log(f"⚠️ Файл cookies не найден: {cookies_file}")
+        
+        # Объединяем с пользовательскими аргументами
+        custom_args = self.custom_entry.get().strip()
+        if extra_args:
+            custom_args = " ".join(extra_args) + (" " + custom_args if custom_args else "")
+        
         return DownloadConfig(
             output_dir=self.output_entry.get().strip() or default_downloads_dir(),
             format_choice=core_fmt,
@@ -307,9 +373,19 @@ class App(ctk.CTk):
             embed_thumbnail=bool(self.thumb_var.get()),
             sponsorblock=bool(self.sponsor_var.get()),
             playlist_mode=bool(self.playlist_var.get()),
-            custom_args=self.custom_entry.get().strip(),
+            custom_args=custom_args,
             ffmpeg_location=self.ffmpeg_entry.get().strip() or None,
+            cookies_from_browser=self._get_cookies_from_browser(),
+            cookies_file=self.cookies_file_entry.get().strip() if auth_method == "file" else None,
         )
+
+    def _get_cookies_from_browser(self) -> Optional[str]:
+        """Вернуть строку cookies_from_browser если выбран метод браузера."""
+        if self.auth_method_var.get() != "browser":
+            return None
+        browser = self.browser_menu.get()
+        profile = self.browser_profile_entry.get().strip()
+        return f"{browser}:{profile}" if profile else browser
 
     def _save_config(self) -> None:
         try:
@@ -328,6 +404,10 @@ class App(ctk.CTk):
                 "custom_args": cfg.custom_args,
                 "ffmpeg_location": cfg.ffmpeg_location or "",
                 "theme": self.theme_menu.get(),
+                "auth_method": self.auth_method_var.get(),
+                "browser": self.browser_menu.get(),
+                "browser_profile": self.browser_profile_entry.get().strip(),
+                "cookies_file": self.cookies_file_entry.get().strip(),
             }
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -357,16 +437,76 @@ class App(ctk.CTk):
             self.custom_entry.insert(0, data.get("custom_args", ""))
             self.ffmpeg_entry.delete(0, "end")
             self.ffmpeg_entry.insert(0, data.get("ffmpeg_location", ""))
+            
+            # Загрузка настроек аутентификации
+            self.auth_method_var.set(data.get("auth_method", "none"))
+            self.browser_menu.set(data.get("browser", "chrome"))
+            self.browser_profile_entry.delete(0, "end")
+            self.browser_profile_entry.insert(0, data.get("browser_profile", ""))
+            self.cookies_file_entry.delete(0, "end")
+            self.cookies_file_entry.insert(0, data.get("cookies_file", ""))
+            
             theme = data.get("theme", "Dark")
             if theme in ("Dark", "Light", "System"):
                 self.theme_menu.set(theme)
                 ctk.set_appearance_mode(theme)
+            
+            # Обновить видимость полей аутентификации
+            self._toggle_auth_fields()
         except Exception:
             pass
 
     # ============================ хендлеры кнопок ============================
     def _on_theme_change(self, value: str) -> None:
         ctk.set_appearance_mode(value)
+
+    def _create_context_menu(self) -> None:
+        """Создание контекстного меню для текстового поля."""
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="📋 Вставить", command=self._on_paste)
+        self.context_menu.add_command(label="✂️ Вырезать", command=self._on_cut)
+        self.context_menu.add_command(label="📄 Копировать", command=self._on_copy)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="🗑️ Удалить", command=self._on_delete)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="✅ Выделить всё", command=self._on_select_all)
+
+    def _show_context_menu(self, event) -> None:
+        """Показ контекстного меню по правой кнопке мыши."""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def _on_cut(self) -> None:
+        """Вырезать выделенный текст."""
+        try:
+            text = self.url_text.get("sel.first", "sel.last")
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.url_text.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass  # Нет выделения
+
+    def _on_copy(self) -> None:
+        """Копировать выделенный текст."""
+        try:
+            text = self.url_text.get("sel.first", "sel.last")
+            self.clipboard_clear()
+            self.clipboard_append(text)
+        except tk.TclError:
+            pass  # Нет выделения
+
+    def _on_delete(self) -> None:
+        """Удалить выделенный текст."""
+        try:
+            self.url_text.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass  # Нет выделения
+
+    def _on_select_all(self) -> None:
+        """Выделить весь текст."""
+        self.url_text.tag_add("sel", "1.0", "end")
 
     def _on_paste(self) -> None:
         try:
@@ -410,6 +550,26 @@ class App(ctk.CTk):
             self.ffmpeg_entry.insert(0, f)
             self._refresh_ffmpeg_status()
 
+    def _on_browse_cookies(self) -> None:
+        f = filedialog.askopenfilename(
+            title="Выберите файл cookies.txt",
+            filetypes=[("Cookies", "*.txt"), ("Все файлы", "*.*")])
+        if f:
+            self.cookies_file_entry.delete(0, "end")
+            self.cookies_file_entry.insert(0, f)
+
+    def _toggle_auth_fields(self) -> None:
+        """Показать/скрыть поля аутентификации в зависимости от выбранного метода."""
+        method = self.auth_method_var.get()
+        # Скрыть все сначала
+        self.browser_frame.pack_forget()
+        self.cookies_file_frame.pack_forget()
+        
+        if method == "browser":
+            self.browser_frame.pack(fill="x", padx=8, pady=4)
+        elif method == "file":
+            self.cookies_file_frame.pack(fill="x", padx=8, pady=4)
+
     def _refresh_ffmpeg_status(self) -> None:
         found = find_ffmpeg(self.ffmpeg_entry.get().strip() or None)
         if found:
@@ -429,11 +589,26 @@ class App(ctk.CTk):
         self.info_label.configure(text=f"🔎 Получение информации: {len(urls)} ссылок…")
         self.fetch_btn.configure(state="disabled")
         self._log(f"🔎 Получение информации: {len(urls)} ссылок…")
+        
+        # Собираем настройки аутентификации для fetch_info
+        auth_method = self.auth_method_var.get()
+        cookies_from_browser = None
+        cookies_file = None
+        
+        if auth_method == "browser":
+            browser = self.browser_menu.get()
+            profile = self.browser_profile_entry.get().strip()
+            cookies_from_browser = f"{browser}:{profile}" if profile else browser
+        elif auth_method == "file":
+            cookies_file = self.cookies_file_entry.get().strip()
+        
         # Колбэки кладут события в очередь — GUI их разберёт в _poll_queue
         self.info_worker = InfoWorker(
             urls,
             playlist_mode=bool(self.playlist_var.get()),
             ffmpeg_location=self.ffmpeg_entry.get().strip() or None,
+            cookies_from_browser=cookies_from_browser,
+            cookies_file=cookies_file,
             on_info=lambda d: self.msg_queue.put(("info", d)),
             on_error=lambda u, e: self.msg_queue.put(("info_error", u, e)),
             on_done=lambda: self.msg_queue.put(("info_done",)),
