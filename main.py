@@ -37,7 +37,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 
 def app_dir() -> str:
@@ -247,10 +247,15 @@ class App(ctk.CTk):
                         variable=self.sponsor_var).pack(anchor="w", padx=10, pady=2)
         
         # --- Аутентификация YouTube ---
+        # Вход логином/паролем YouTube больше не поддерживает (ни yt-dlp,
+        # ни Google его не дают): только куки из браузера или cookies.txt.
         auth_frame = ctk.CTkFrame(right, fg_color="transparent")
         auth_frame.pack(fill="x", padx=10, pady=(8, 2))
         ctk.CTkLabel(auth_frame, text="🔐 YouTube Login", font=ctk.CTkFont(weight="bold", size=11)).pack(
             anchor="w", padx=8, pady=(6, 4))
+        ctk.CTkLabel(auth_frame, text="Вход — только куками (пароль YouTube не поддерживается).",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(
+            anchor="w", padx=8)
         
         self.auth_method_var = tk.StringVar(value="none")
         method_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
@@ -272,6 +277,10 @@ class App(ctk.CTk):
         self.browser_menu.pack(side="left", padx=4)
         self.browser_profile_entry = ctk.CTkEntry(self.browser_frame, placeholder_text="Профиль (опционально)", width=150)
         self.browser_profile_entry.pack(side="left", padx=4)
+        self.browser_warn = ctk.CTkLabel(
+            auth_frame,
+            text="⚠️ Перед стартом полностью закрой браузер — иначе его база кук locked и yt-dlp её не прочитает.",
+            font=ctk.CTkFont(size=11), text_color="gray", wraplength=400, justify="left")
         
         self.cookies_file_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
         self.cookies_file_frame.pack(fill="x", padx=8, pady=4)
@@ -549,10 +558,12 @@ class App(ctk.CTk):
         method = self.auth_method_var.get()
         # Скрыть все сначала
         self.browser_frame.pack_forget()
+        self.browser_warn.pack_forget()
         self.cookies_file_frame.pack_forget()
-        
+
         if method == "browser":
             self.browser_frame.pack(fill="x", padx=8, pady=4)
+            self.browser_warn.pack(fill="x", padx=8, pady=(0, 4))
         elif method == "file":
             self.cookies_file_frame.pack(fill="x", padx=8, pady=4)
 
