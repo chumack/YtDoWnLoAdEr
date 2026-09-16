@@ -36,7 +36,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 
 def app_dir() -> str:
@@ -261,7 +261,7 @@ class App(ctk.CTk):
         self.browser_frame.pack(fill="x", padx=8, pady=4)
         ctk.CTkLabel(self.browser_frame, text="Браузер:").pack(side="left", padx=(4, 6))
         self.browser_menu = ctk.CTkOptionMenu(self.browser_frame, values=[
-            "chrome", "firefox", "edge", "brave", "chromium", "safari"
+            "chrome", "firefox", "edge", "brave", "chromium", "vivaldi", "opera", "safari"
         ], width=120)
         self.browser_menu.set("chrome")
         self.browser_menu.pack(side="left", padx=4)

@@ -257,8 +257,10 @@ def parse_custom_args(arg_str: str) -> tuple[Dict[str, Any], List[str]]:
         if container is not None:
             container = container.strip() or None
         if name not in ("chrome", "chromium", "brave", "edge", "firefox",
-                        "opera", "safari", "vivaldi", "whale", "yandex"):
-            warnings.append(f"--cookies-from-browser: неизвестный браузер {name!r}")
+                        "opera", "safari", "vivaldi", "whale"):
+            # Синхронизировано с yt_dlp.cookies.SUPPORTED_BROWSERS.
+            # Яндекс Браузера там нет — для него только метод «Файл cookies.txt».
+            warnings.append(f"--cookies-from-browser: браузер {name!r} не поддерживается yt-dlp")
         _set("cookiesfrombrowser", (name, profile, keyring, container))
 
     while i < len(tokens):
