@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# PyInstaller
+build/
+dist/
+*.manifest
+*.spec
+!YtDoWnLoAdEr.spec
+
+# Локальные данные пользователя (не в репозиторий)
+config.json
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.mp3
+*.m4a
+*.opus
+*.srt
+*.vtt
+*.jpg
+*.webp
+
+# FFmpeg рядом с exe — каждый скачивает сам
+ffmpeg.exe
+ffmpeg/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
