@@ -36,7 +36,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.5"
 
 
 def app_dir() -> str:
@@ -246,7 +246,7 @@ class App(ctk.CTk):
                         variable=self.sponsor_var).pack(anchor="w", padx=10, pady=2)
         
         # --- Аутентификация YouTube ---
-        auth_frame = ctk.CTkFrame(right, fg_color="#2B2B2B")
+        auth_frame = ctk.CTkFrame(right, fg_color="transparent")
         auth_frame.pack(fill="x", padx=10, pady=(8, 2))
         ctk.CTkLabel(auth_frame, text="🔐 YouTube Login", font=ctk.CTkFont(weight="bold", size=11)).pack(
             anchor="w", padx=8, pady=(6, 4))
@@ -265,7 +265,7 @@ class App(ctk.CTk):
         self.browser_frame.pack(fill="x", padx=8, pady=4)
         ctk.CTkLabel(self.browser_frame, text="Браузер:").pack(side="left", padx=(4, 6))
         self.browser_menu = ctk.CTkOptionMenu(self.browser_frame, values=[
-            "chrome", "firefox", "edge", "brave", "chromium", "safari"
+            "chrome", "firefox", "edge", "brave", "chromium", "safari", "vivaldi", "opera"
         ], width=120)
         self.browser_menu.set("chrome")
         self.browser_menu.pack(side="left", padx=4)
@@ -339,28 +339,9 @@ class App(ctk.CTk):
         display = self.format_menu.get()
         core_fmt = DISPLAY_TO_CORE.get(display, "best")
         
-        # Собираем настройки аутентификации YouTube
-        auth_method = self.auth_method_var.get()
-        extra_args = []
-        
-        if auth_method == "browser":
-            browser = self.browser_menu.get()
-            profile = self.browser_profile_entry.get().strip()
-            if profile:
-                extra_args.append(f"--cookies-from-browser {browser}:{profile}")
-            else:
-                extra_args.append(f"--cookies-from-browser {browser}")
-        elif auth_method == "file":
-            cookies_file = self.cookies_file_entry.get().strip()
-            if cookies_file and os.path.isfile(cookies_file):
-                extra_args.append(f'--cookies "{cookies_file}"')
-            elif cookies_file:
-                self._log(f"⚠️ Файл cookies не найден: {cookies_file}")
-        
-        # Объединяем с пользовательскими аргументами
+        # Возвращаем НАСТОЯЩИЙ текст из поля custom_args, без добавления --cookies*
+        # Аутентификация передаётся ТОЛЬКО через отдельные поля cookies_from_browser/cookies_file
         custom_args = self.custom_entry.get().strip()
-        if extra_args:
-            custom_args = " ".join(extra_args) + (" " + custom_args if custom_args else "")
         
         return DownloadConfig(
             output_dir=self.output_entry.get().strip() or default_downloads_dir(),
@@ -376,7 +357,7 @@ class App(ctk.CTk):
             custom_args=custom_args,
             ffmpeg_location=self.ffmpeg_entry.get().strip() or None,
             cookies_from_browser=self._get_cookies_from_browser(),
-            cookies_file=self.cookies_file_entry.get().strip() if auth_method == "file" else None,
+            cookies_file=self.cookies_file_entry.get().strip() if self.auth_method_var.get() == "file" else None,
         )
 
     def _get_cookies_from_browser(self) -> Optional[str]:
