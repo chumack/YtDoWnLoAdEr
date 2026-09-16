@@ -76,6 +76,10 @@ class DownloadConfig:
     playlist_mode: bool = False  # False = только одно видео (noplaylist=True)
     custom_args: str = ""  # сырая строка CLI-аргументов yt-dlp
     ffmpeg_location: Optional[str] = None  # путь к папке с ffmpeg.exe или к самому exe
+    
+    # Аутентификация YouTube
+    cookies_from_browser: Optional[str] = None  # "chrome" или "chrome:profile"
+    cookies_file: Optional[str] = None  # путь к cookies.txt
 
 
 @dataclass
@@ -392,6 +396,24 @@ def _format_string(choice: str) -> str:
     return "bv*+ba/b"
 
 
+class _ErrorCollector:
+    """Коллектор ошибок для yt-dlp при extract_info."""
+    
+    def __init__(self):
+        self.errors: List[str] = []
+        self._lock = threading.Lock()
+    
+    def add(self, msg: str) -> None:
+        with self._lock:
+            self.errors.append(msg)
+    
+    def get_combined(self) -> str:
+        with self._lock:
+            if not self.errors:
+                return ""
+            return "; ".join(self.errors[:3])  # Первые 3 ошибки
+
+
 class _QuietLogger:
     """Логгер yt-dlp, который перенаправляет сообщения в GUI-лог.
 
@@ -400,12 +422,9 @@ class _QuietLogger:
     Ошибки логгера никогда не должны ронять загрузку.
     """
 
-    def __init__(self, log_cb: Optional[LogCallback],
-                 collect_errors: Optional[List[str]] = None):
+    def __init__(self, log_cb: Optional[LogCallback], error_collector: Optional[_ErrorCollector] = None):
         self._log = log_cb
-        # Сюда складываем строки ошибок — нужно, чтобы при ignoreerrors=True
-        # не потерять НАСТОЯЩУЮ причину (иначе GUI покажет только «result is None»).
-        self._collect_errors = collect_errors
+        self._error_collector = error_collector
 
     def _emit(self, msg: str) -> None:
         if self._log is None:
@@ -428,11 +447,11 @@ class _QuietLogger:
         self._emit(f"[warn] {msg}")
 
     def error(self, msg: str) -> None:
-        if self._collect_errors is not None:
+        if self._error_collector is not None:
             try:
                 clean = re.sub(r"\x1b\[[0-9;]*m", "", str(msg)).strip()
                 # Режем FAQ-простыни, но оставляем суть (первые ~400 символов)
-                self._collect_errors.append(clean[:400])
+                self._error_collector.add(clean[:400])
             except Exception:
                 pass
         self._emit(f"[ошибка] {msg}")
@@ -573,6 +592,20 @@ def build_ydl_opts(
     if "--no-playlist" not in (cfg.custom_args or "") and "--yes-playlist" not in (cfg.custom_args or ""):
         ydl_opts["noplaylist"] = noplaylist_gui
 
+    # --- Аутентификация YouTube (куки) ---
+    # Приоритет: явные поля DownloadConfig > кастомные аргументы
+    if cfg.cookies_from_browser:
+        # Форматируем как кортеж для yt-dlp 2025+: (browser_name, profile_name, keyring, container)
+        if ":" in cfg.cookies_from_browser:
+            parts = cfg.cookies_from_browser.split(":", 1)
+            browser_name = parts[0]
+            profile_name = parts[1] if len(parts) > 1 else None
+            ydl_opts["cookiesfrombrowser"] = (browser_name, profile_name, None, None)
+        else:
+            ydl_opts["cookiesfrombrowser"] = (cfg.cookies_from_browser, None, None, None)
+    elif cfg.cookies_file and os.path.isfile(cfg.cookies_file):
+        ydl_opts["cookiefile"] = cfg.cookies_file
+
     return ydl_opts
 
 
@@ -580,12 +613,18 @@ def build_ydl_opts(
 # Получение информации (быстрый двухэтапный парсинг)
 # ---------------------------------------------------------------------------
 def fetch_info_sync(url: str, playlist_mode: bool = False,
-                    ffmpeg_location: Optional[str] = None) -> VideoInfo:
+                    ffmpeg_location: Optional[str] = None,
+                    cookies_from_browser: Optional[str] = None,
+                    cookies_file: Optional[str] = None) -> VideoInfo:
     """Блокирующий вызов. Выполнять ТОЛЬКО в фоновом потоке.
 
     Этап 1: extract_info(process=False) — быстрый, определяет тип.
     Этап 2: process_ie_result — догружает title/duration для видео.
+    
+    :param cookies_from_browser: строка вида "chrome" или "chrome:profile"
+    :param cookies_file: путь к файлу cookies.txt
     """
+    error_collector = _ErrorCollector()
     base_opts: Dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -598,16 +637,24 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         fp = find_ffmpeg(ffmpeg_location)
         if fp:
             base_opts["ffmpeg_location"] = fp
+    
+    # Добавляем поддержку аутентификации
+    if cookies_from_browser:
+        # В новых версиях yt-dlp требуется кортеж: (browser_name, profile_name, keyring, container)
+        if ":" in cookies_from_browser:
+            parts = cookies_from_browser.split(":", 1)
+            browser_name = parts[0]
+            profile_name = parts[1] if len(parts) > 1 else None
+            base_opts["cookiesfrombrowser"] = (browser_name, profile_name, None, None)
+        else:
+            base_opts["cookiesfrombrowser"] = (cookies_from_browser, None, None, None)
+    elif cookies_file and os.path.isfile(cookies_file):
+        base_opts["cookiefile"] = cookies_file
 
     # Собираем НАСТОЯЩИЕ тексты ошибок: при ignoreerrors=True движок глотает
     # исключение и возвращает None — без коллектора GUI показал бы пустышку.
-    err_lines: List[str] = []
-    base_opts["logger"] = _QuietLogger(None, collect_errors=err_lines)
-
-    def _fail(prefix: str) -> DownloadError:
-        cause = err_lines[-1] if err_lines else ""
-        text = f"{prefix}: {url}" + (f" — {cause}" if cause else "")
-        return DownloadError(friendly_dl_error(text))
+    error_collector = _ErrorCollector()
+    base_opts["logger"] = _QuietLogger(None, error_collector)
 
     with yt_dlp.YoutubeDL(base_opts) as ydl:
         # Этап 1 — лёгкий
@@ -617,7 +664,8 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
             # ignoreerrors=False у пользователя? Всё равно отдаём дружелюбный текст
             raise DownloadError(friendly_dl_error(str(e))) from e
         if ie_result is None:
-            raise _fail("Не удалось получить информацию")
+            err_msg = error_collector.get_combined() or f"Не удалось получить информацию: {url}"
+            raise DownloadError(friendly_dl_error(err_msg))
 
         # Плейлист?
         if ie_result.get("_type") == "playlist":
@@ -646,7 +694,8 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         # Этап 2 — полная обработка single video
         info = ydl.process_ie_result(ie_result, download=False)
         if info is None:
-            raise _fail("Пустой результат")
+            err_msg = error_collector.get_combined() or f"Пустой результат для: {url}"
+            raise DownloadError(friendly_dl_error(err_msg))
         if info.get("_type") == "playlist":
             # Редкий кейс: раскрылся как плейлист на втором этапе
             entries = info.get("entries") or []
@@ -690,6 +739,8 @@ class InfoWorker(threading.Thread):
         urls: List[str],
         playlist_mode: bool = False,
         ffmpeg_location: Optional[str] = None,
+        cookies_from_browser: Optional[str] = None,
+        cookies_file: Optional[str] = None,
         on_info: Optional[InfoCallback] = None,
         on_error: Optional[ErrorCallback] = None,
         on_done: Optional[Callable[[], None]] = None,
@@ -698,6 +749,8 @@ class InfoWorker(threading.Thread):
         self._urls = urls
         self._playlist_mode = playlist_mode
         self._ffmpeg_location = ffmpeg_location
+        self._cookies_from_browser = cookies_from_browser
+        self._cookies_file = cookies_file
         self._on_info = on_info
         self._on_error = on_error
         self._on_done = on_done
@@ -706,7 +759,13 @@ class InfoWorker(threading.Thread):
         try:
             for url in self._urls:
                 try:
-                    vi = fetch_info_sync(url, self._playlist_mode, self._ffmpeg_location)
+                    vi = fetch_info_sync(
+                        url, 
+                        self._playlist_mode, 
+                        self._ffmpeg_location,
+                        self._cookies_from_browser,
+                        self._cookies_file,
+                    )
                     if self._on_info:
                         self._on_info({
                             "url": vi.url,
@@ -871,11 +930,17 @@ class DownloadWorker(threading.Thread):
                     self._set_status(url, "⏹ Остановлено")
                     self._log("⏹ Остановлено пользователем.")
                     break
-                self._set_status(url, f"❌ Ошибка: {msg[:160]}")
-                self._log(f"❌ Ошибка загрузки {url}: {msg}")
+                
+                # Добавляем подсказку про аутентификацию для типичных ошибок
+                hint = ""
+                if any(kw in msg.lower() for kw in ["sign in", "confirm you're not a bot", "private", "members-only", "logged in"]):
+                    hint = " 💡 Возможно, требуется вход в YouTube. Попробуйте настроить 🔐 YouTube Login в опциях."
+                
+                self._set_status(url, f"❌ Ошибка: {msg[:120]}{hint}")
+                self._log(f"❌ Ошибка загрузки {url}: {msg}{hint}")
                 if self._on_error_cb:
                     try:
-                        self._on_error_cb(url, msg)
+                        self._on_error_cb(url, msg + hint)
                     except Exception:
                         pass
                 continue  # идём к следующему URL, не роняем очередь
