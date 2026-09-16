@@ -36,7 +36,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 
 def app_dir() -> str:
@@ -242,7 +242,7 @@ class App(ctk.CTk):
                         variable=self.sponsor_var).pack(anchor="w", padx=10, pady=2)
         
         # --- Аутентификация YouTube ---
-        auth_frame = ctk.CTkFrame(right, fg_color="#2B2B2B")
+        auth_frame = ctk.CTkFrame(right, fg_color="transparent")
         auth_frame.pack(fill="x", padx=10, pady=(8, 2))
         ctk.CTkLabel(auth_frame, text="🔐 YouTube Login", font=ctk.CTkFont(weight="bold", size=11)).pack(
             anchor="w", padx=8, pady=(6, 4))
@@ -386,7 +386,10 @@ class App(ctk.CTk):
                 "embed_thumbnail": cfg.embed_thumbnail,
                 "sponsorblock": cfg.sponsorblock,
                 "playlist_mode": cfg.playlist_mode,
-                "custom_args": cfg.custom_args,
+                # Сырой текст поля, а НЕ cfg.custom_args: туда _collect_config
+                # подмешивает сгенерированные --cookies*, иначе при каждой
+                # загрузке они дублировались бы в поле после перезапуска.
+                "custom_args": self.custom_entry.get().strip(),
                 "ffmpeg_location": cfg.ffmpeg_location or "",
                 "theme": self.theme_menu.get(),
                 "auth_method": self.auth_method_var.get(),

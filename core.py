@@ -198,12 +198,14 @@ def parse_custom_args(arg_str: str) -> tuple[Dict[str, Any], List[str]]:
 
     i = 0
     # Явная таблица частых опций
+    # (--cookies* обрабатываются отдельными ветками ниже, т.к. требуют
+    #  спец-маппинга: cookiefile / кортеж cookiesfrombrowser)
     takes_value = {
         "--merge-output-format", "--merge_output_format",
         "--playlist-items", "--playlist_items",
         "--concurrent-fragments", "--concurrent_fragments",
         "--retries", "--fragment-retries", "--fragment_retries",
-        "--proxy", "--cookies", "--cookies-from-browser", "--cookies_from_browser",
+        "--proxy",
         "--user-agent", "--user_agent", "--referer", "--sleep-interval",
         "--max-sleep-interval", "--rate-limit", "--rate_limit",
         "--sponsorblock-remove", "--sponsorblock-mark",
@@ -215,7 +217,6 @@ def parse_custom_args(arg_str: str) -> tuple[Dict[str, Any], List[str]]:
         # Нормализация имён: CLI --rate-limit -> yt-dlp 'ratelimit' и т.п.
         aliases = {
             "rate_limit": "ratelimit",
-            "cookies_from_browser": "cookiesfrombrowser",
             "sub_langs": "subtitleslangs",
             "subtitles_langs": "subtitleslangs",
             "remux_video": "remuxvideo",
@@ -225,6 +226,40 @@ def parse_custom_args(arg_str: str) -> tuple[Dict[str, Any], List[str]]:
             "format_sort": "format_sort",
         }
         opts[aliases.get(key, key)] = value
+
+    def _set_browser_spec(spec: str) -> None:
+        """BROWSER[+KEYRING][:PROFILE][::CONTAINER] -> кортеж для YoutubeDL.
+
+        Важно: CLI-парсинг строки в кортеж делает __main__ yt-dlp, а не
+        YoutubeDL — при работе через API кортеж нужно собрать самим,
+        иначе load_cookies упадёт с CookieLoadError. Грамматика — 1-в-1
+        как в yt_dlp/__init__.py.
+        """
+        m = re.fullmatch(
+            r"(?P<name>[^+:]+)"
+            r"(?:\s*\+\s*(?P<keyring>[^:]+))?"
+            r"(?:\s*:\s*(?!:)(?P<profile>.+?))?"
+            r"(?:\s*::\s*(?P<container>.+))?",
+            spec.strip(),
+        )
+        if m is None:
+            warnings.append(f"--cookies-from-browser: неверный формат: {spec!r} "
+                            f"(нужно BROWSER[:PROFILE])")
+            return
+        name = m.group("name").strip().lower()
+        keyring = m.group("keyring")
+        profile = m.group("profile")
+        container = m.group("container")
+        if keyring is not None:
+            keyring = keyring.strip().upper()
+        if profile is not None:
+            profile = profile.strip() or None
+        if container is not None:
+            container = container.strip() or None
+        if name not in ("chrome", "chromium", "brave", "edge", "firefox",
+                        "opera", "safari", "vivaldi", "whale", "yandex"):
+            warnings.append(f"--cookies-from-browser: неизвестный браузер {name!r}")
+        _set("cookiesfrombrowser", (name, profile, keyring, container))
 
     while i < len(tokens):
         tok = tokens[i]
@@ -276,6 +311,23 @@ def parse_custom_args(arg_str: str) -> tuple[Dict[str, Any], List[str]]:
             _set("embedmetadata", True)
             _set("addmetadata", True)
             i += 1
+        elif tok in ("--cookies", "--cookiefile"):
+            # CLI --cookies FILE -> YoutubeDL 'cookiefile' ('cookies' движок проигнорирует!)
+            val = tokens[i + 1] if i + 1 < len(tokens) else None
+            if val is None or val.startswith("-"):
+                warnings.append(f"{tok}: нет значения")
+                i += 1
+            else:
+                _set("cookiefile", val)
+                i += 2
+        elif tok in ("--cookies-from-browser", "--cookies_from_browser"):
+            val = tokens[i + 1] if i + 1 < len(tokens) else None
+            if val is None or val.startswith("-"):
+                warnings.append(f"{tok}: нет значения (нужно BROWSER[:PROFILE])")
+                i += 1
+            else:
+                _set_browser_spec(val)
+                i += 2
         elif tok in takes_value:
             val = tokens[i + 1] if i + 1 < len(tokens) else None
             if val is None or val.startswith("-"):
