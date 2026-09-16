@@ -650,21 +650,21 @@ class DownloadWorker(threading.Thread):
         self._on_file_done = on_file_done
         self._on_all_done = on_all_done
         self._on_error_cb = on_error
-        self._stop = threading.Event()
+        self._stop_flag = threading.Event()
         self._current_url = ""
 
     # -- управление --
     def stop(self) -> None:
         """Запросить остановку (проверяется между файлами + хуком прогресса)."""
-        self._stop.set()
+        self._stop_flag.set()
 
     @property
     def stopped(self) -> bool:
-        return self._stop.is_set()
+        return self._stop_flag.is_set()
 
     # -- внутренние хуки yt-dlp (вызываются движком скачивания) --
     def _progress_hook(self, d: Dict[str, Any]) -> None:
-        if self._stop.is_set():
+        if self._stop_flag.is_set():
             raise DownloadError("Остановлено пользователем")
         if self._on_progress is None:
             return
@@ -729,7 +729,7 @@ class DownloadWorker(threading.Thread):
     def run(self) -> None:  # noqa: D102
         total = len(self._urls)
         for idx, url in enumerate(self._urls, start=1):
-            if self._stop.is_set():
+            if self._stop_flag.is_set():
                 self._log("⏹ Загрузка остановлена пользователем.")
                 break
             self._current_url = url
@@ -746,7 +746,7 @@ class DownloadWorker(threading.Thread):
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
 
-                if self._stop.is_set():
+                if self._stop_flag.is_set():
                     self._set_status(url, "⏹ Остановлено")
                 else:
                     self._set_status(url, "✅ Готово")
