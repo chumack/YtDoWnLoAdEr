@@ -179,6 +179,59 @@ def find_ffmpeg(custom_path: Optional[str] = None) -> Optional[str]:
     return found
 
 
+# Куки, без которых youtube.com считает сессию гостевой (нет входа).
+# Проверяем именно .youtube.com: бывает файл с куками google.com,
+# но без входа на самом YouTube — тогда бот-чек не снимется.
+_YT_LOGIN_COOKIES = ("SID", "SSID", "HSID", "SAPISID", "LOGIN_INFO")
+
+
+def check_youtube_login(cookies_file: Optional[str]) -> tuple[bool, str]:
+    """Проверить, что cookies.txt содержит вход в YouTube.
+
+    Возвращает (ok, detail). Смотрит только ИМЕНА и СРОКИ кук,
+    значения не читает и никуда не отправляет.
+    """
+    import time as _time
+
+    if not cookies_file:
+        return False, "файл не указан"
+    if not os.path.isfile(cookies_file):
+        return False, f"файл не найден: {cookies_file}"
+    try:
+        found: dict[str, bool] = {}
+        now = _time.time()
+        with open(cookies_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    continue
+                domain, expiry_s, name = parts[0], parts[4], parts[5]
+                if "youtube.com" not in domain or name not in _YT_LOGIN_COOKIES:
+                    continue
+                try:
+                    # expiry=0 — сессионная кука, это нормально
+                    expired = int(expiry_s) != 0 and int(expiry_s) < now
+                except ValueError:
+                    expired = False
+                if not expired:
+                    found[name] = True
+        # Для входа достаточно пары SID+SSID (остальные усиливают)
+        if "SID" in found and "SSID" in found:
+            return True, f"вход есть ({', '.join(sorted(found))})"
+        if found:
+            return False, ("частичный вход "
+                           f"({', '.join(sorted(found))}) — нет связки SID+SSID, "
+                           "переэкспортируй куки из залогиненного YouTube")
+        return False, ("в файле нет входа в YouTube "
+                       "(нет SID/SSID для .youtube.com) — открой youtube.com "
+                       "в браузере, войди в аккаунт и экспортируй куки заново")
+    except Exception as e:  # noqa: BLE001 — проверка не должна ничего ронять
+        return False, f"не удалось прочитать файл: {type(e).__name__}: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Кастомные аргументы CLI -> ydl_opts
 # ---------------------------------------------------------------------------

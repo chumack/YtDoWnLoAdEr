@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tkinter as tk
 from tkinter import filedialog
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import customtkinter as ctk
 
@@ -28,6 +28,7 @@ from core import (
     DownloadConfig,
     DownloadWorker,
     InfoWorker,
+    check_youtube_login,
     find_ffmpeg,
     parse_input_urls,
 )
@@ -36,7 +37,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 
 def app_dir() -> str:
@@ -586,7 +587,8 @@ class App(ctk.CTk):
             cookies_from_browser = f"{browser}:{profile}" if profile else browser
         elif auth_method == "file":
             cookies_file = self.cookies_file_entry.get().strip()
-        
+            self._check_cookies_file(cookies_file)
+
         # Колбэки кладут события в очередь — GUI их разберёт в _poll_queue
         self.info_worker = InfoWorker(
             urls,
@@ -611,6 +613,8 @@ class App(ctk.CTk):
         cfg = self._collect_config()
         self._save_config()
         self._refresh_ffmpeg_status()
+        if cfg.cookies_file:
+            self._check_cookies_file(cfg.cookies_file)
 
         # Предупреждение про FFmpeg (не блокируем — yt-dlp сам сообщит в лог)
         if not find_ffmpeg(cfg.ffmpeg_location):
@@ -705,6 +709,22 @@ class App(ctk.CTk):
         """Переключить нижние вкладки на лог (только для ошибок)."""
         try:
             self.bottom_tabs.set("📜 Лог")
+        except Exception:
+            pass
+
+    def _check_cookies_file(self, path: Optional[str]) -> None:
+        """Предупредить в лог, если cookies.txt не содержит входа в YouTube.
+
+        Не блокирует запуск: проверка эвристическая, последнее слово за движком.
+        """
+        try:
+            ok, detail = check_youtube_login((path or "").strip() or None)
+            if ok:
+                self._log(f"🔐 Куки в порядке: {detail}.")
+            else:
+                self._log(f"⚠️ Проверка cookies.txt: {detail}. "
+                          f"Без живого входа бот-чек YouTube не снимется.")
+                self._show_log_tab()
         except Exception:
             pass
 
