@@ -400,8 +400,12 @@ class _QuietLogger:
     Ошибки логгера никогда не должны ронять загрузку.
     """
 
-    def __init__(self, log_cb: Optional[LogCallback]):
+    def __init__(self, log_cb: Optional[LogCallback],
+                 collect_errors: Optional[List[str]] = None):
         self._log = log_cb
+        # Сюда складываем строки ошибок — нужно, чтобы при ignoreerrors=True
+        # не потерять НАСТОЯЩУЮ причину (иначе GUI покажет только «result is None»).
+        self._collect_errors = collect_errors
 
     def _emit(self, msg: str) -> None:
         if self._log is None:
@@ -424,7 +428,37 @@ class _QuietLogger:
         self._emit(f"[warn] {msg}")
 
     def error(self, msg: str) -> None:
+        if self._collect_errors is not None:
+            try:
+                clean = re.sub(r"\x1b\[[0-9;]*m", "", str(msg)).strip()
+                # Режем FAQ-простыни, но оставляем суть (первые ~400 символов)
+                self._collect_errors.append(clean[:400])
+            except Exception:
+                pass
         self._emit(f"[ошибка] {msg}")
+
+
+# Маркеры «YouTube требует вход» в текстах ошибок yt-dlp
+_BOT_MARKERS = (
+    "sign in to confirm",
+    "not a bot",
+    "use --cookies",
+    "--cookies-from-browser",
+)
+
+BOT_HINT = ("💡 Похоже, YouTube требует вход (защита от ботов). "
+            "Включи 🔐 YouTube Login в настройках: «Из браузера» или «Файл cookies.txt».")
+
+
+def friendly_dl_error(exc_text: str) -> str:
+    """Добавить русскую подсказку про 🔐 Login к бот-ошибкам YouTube."""
+    try:
+        low = str(exc_text).lower()
+    except Exception:
+        return str(exc_text)
+    if any(m in low for m in _BOT_MARKERS):
+        return f"{exc_text}\n{BOT_HINT}"
+    return str(exc_text)
 
 
 def build_ydl_opts(
@@ -557,7 +591,7 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         "no_warnings": True,
         "socket_timeout": 15,
         "noplaylist": not playlist_mode,
-        "ignoreerrors": True,
+        "ignoreerrors": True,  # для плейлистов: пропускать битые entries
         "extract_flat": False,
     }
     if ffmpeg_location:
@@ -565,11 +599,25 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         if fp:
             base_opts["ffmpeg_location"] = fp
 
+    # Собираем НАСТОЯЩИЕ тексты ошибок: при ignoreerrors=True движок глотает
+    # исключение и возвращает None — без коллектора GUI показал бы пустышку.
+    err_lines: List[str] = []
+    base_opts["logger"] = _QuietLogger(None, collect_errors=err_lines)
+
+    def _fail(prefix: str) -> DownloadError:
+        cause = err_lines[-1] if err_lines else ""
+        text = f"{prefix}: {url}" + (f" — {cause}" if cause else "")
+        return DownloadError(friendly_dl_error(text))
+
     with yt_dlp.YoutubeDL(base_opts) as ydl:
         # Этап 1 — лёгкий
-        ie_result = ydl.extract_info(url, download=False, process=False)
+        try:
+            ie_result = ydl.extract_info(url, download=False, process=False)
+        except DownloadError as e:
+            # ignoreerrors=False у пользователя? Всё равно отдаём дружелюбный текст
+            raise DownloadError(friendly_dl_error(str(e))) from e
         if ie_result is None:
-            raise DownloadError(f"Не удалось получить информацию: {url}")
+            raise _fail("Не удалось получить информацию")
 
         # Плейлист?
         if ie_result.get("_type") == "playlist":
@@ -598,7 +646,7 @@ def fetch_info_sync(url: str, playlist_mode: bool = False,
         # Этап 2 — полная обработка single video
         info = ydl.process_ie_result(ie_result, download=False)
         if info is None:
-            raise DownloadError(f"Пустой результат для: {url}")
+            raise _fail("Пустой результат")
         if info.get("_type") == "playlist":
             # Редкий кейс: раскрылся как плейлист на втором этапе
             entries = info.get("entries") or []
@@ -670,7 +718,7 @@ class InfoWorker(threading.Thread):
                         })
                 except Exception as e:  # noqa: BLE001 — обязаны не ронять поток
                     if self._on_error:
-                        self._on_error(url, f"{type(e).__name__}: {e}")
+                        self._on_error(url, friendly_dl_error(f"{type(e).__name__}: {e}"))
         finally:
             if self._on_done:
                 try:
@@ -798,10 +846,16 @@ class DownloadWorker(threading.Thread):
                     log_cb=self._log,
                 )
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    retcode = ydl.download([url])
 
                 if self._stop_flag.is_set():
                     self._set_status(url, "⏹ Остановлено")
+                elif retcode != 0:
+                    # ignoreerrors=True: движок не бросил исключение, но файл
+                    # не создан (retcode=1). Без проверки показали бы «✅ Готово».
+                    raise DownloadError(
+                        "yt-dlp завершился с ошибкой (файл не создан). "
+                        "Смотри строки [ошибка] выше в логе.")
                 else:
                     self._set_status(url, "✅ Готово")
                     if self._on_file_done:
@@ -812,7 +866,7 @@ class DownloadWorker(threading.Thread):
                     self._log(f"✅ Готово: {url}")
 
             except DownloadError as e:
-                msg = str(e)
+                msg = friendly_dl_error(str(e))
                 if "Остановлено пользователем" in msg:
                     self._set_status(url, "⏹ Остановлено")
                     self._log("⏹ Остановлено пользователем.")
@@ -826,11 +880,12 @@ class DownloadWorker(threading.Thread):
                         pass
                 continue  # идём к следующему URL, не роняем очередь
             except Exception as e:  # noqa: BLE001 — очередь обязана жить
-                self._set_status(url, f"❌ {type(e).__name__}: {str(e)[:160]}")
-                self._log(f"❌ Неожиданная ошибка {url}: {type(e).__name__}: {e}")
+                msg = friendly_dl_error(f"{type(e).__name__}: {e}")
+                self._set_status(url, f"❌ {msg[:160]}")
+                self._log(f"❌ Неожиданная ошибка {url}: {msg}")
                 if self._on_error_cb:
                     try:
-                        self._on_error_cb(url, f"{type(e).__name__}: {e}")
+                        self._on_error_cb(url, msg)
                     except Exception:
                         pass
                 continue

@@ -36,7 +36,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 
 def app_dir() -> str:
@@ -315,7 +315,8 @@ class App(ctk.CTk):
         self.stats_label.grid(row=0, column=4, padx=8)
 
         # --- Низ: очередь + лог ---
-        bottom = ctk.CTkTabview(self)
+        self.bottom_tabs = ctk.CTkTabview(self)
+        bottom = self.bottom_tabs
         bottom.grid(row=4, column=0, sticky="nsew", padx=12, pady=(6, 12))
         bottom.add("📥 Очередь")
         bottom.add("📜 Лог")
@@ -641,6 +642,13 @@ class App(ctk.CTk):
             pass
 
     # ============================ мост потоков -> GUI ============================
+    def _show_log_tab(self) -> None:
+        """Переключить нижние вкладки на лог (только для ошибок)."""
+        try:
+            self.bottom_tabs.set("📜 Лог")
+        except Exception:
+            pass
+
     def _poll_queue(self) -> None:
         """Выполняется в GUI-потоке каждые 100 мс. Единственное место,
         где фоновые события касаются виджетов."""
@@ -724,6 +732,7 @@ class App(ctk.CTk):
                 self.task_widgets[url]["status"].configure(text=f"❌ Ошибка инфо: {err[:120]}")
             except Exception:
                 pass
+            self._show_log_tab()  # ошибка должна быть ВИДНА, а не прятаться во вкладке
 
         elif kind == "info_done":
             self.fetch_btn.configure(state="normal")
@@ -743,6 +752,7 @@ class App(ctk.CTk):
         elif kind == "dl_error":
             _, url, err = msg
             self._log(f"❌ Ошибка [{url}]: {err}")
+            self._show_log_tab()
 
         elif kind == "all_done":
             self.download_btn.configure(state="normal")
