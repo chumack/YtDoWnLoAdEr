@@ -521,16 +521,30 @@ _BOT_MARKERS = (
 BOT_HINT = ("💡 Похоже, YouTube требует вход (защита от ботов). "
             "Включи 🔐 YouTube Login в настройках: «Из браузера» или «Файл cookies.txt».")
 
+# Плеер YouTube отклонил запрос несмотря на куки — обычно бан/фильтр сети/IP
+# (PO-токен не принимается). Кодом не лечится, только сменой сети/ожиданием.
+_RELOAD_MARKERS = (
+    "needs to be reloaded",
+    "reload the page",
+)
+
+RELOAD_HINT = ("💡 YouTube отклонил запрос с этой сети/IP даже со входом. "
+               "Попробуй позже, другую сеть (раздача с телефона/VPN) "
+               "или обнови yt-dlp: pip install -U yt-dlp.")
+
 
 def friendly_dl_error(exc_text: str) -> str:
-    """Добавить русскую подсказку про 🔐 Login к бот-ошибкам YouTube."""
+    """Добавить русские подсказки к типовым ошибкам YouTube."""
     try:
-        low = str(exc_text).lower()
+        text = str(exc_text)
+        low = text.lower()
     except Exception:
         return str(exc_text)
     if any(m in low for m in _BOT_MARKERS):
-        return f"{exc_text}\n{BOT_HINT}"
-    return str(exc_text)
+        text = f"{text}\n{BOT_HINT}"
+    if any(m in low for m in _RELOAD_MARKERS):
+        text = f"{text}\n{RELOAD_HINT}"
+    return text
 
 
 def build_ydl_opts(

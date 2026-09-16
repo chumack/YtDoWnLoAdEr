@@ -37,7 +37,7 @@ from core import (
 # Константы UI
 # ---------------------------------------------------------------------------
 APP_TITLE = "YT Downloader — yt-dlp GUI"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 
 def app_dir() -> str:
@@ -122,7 +122,7 @@ def human_eta(secs: Any) -> str:
 class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(f"{APP_TITLE} v{APP_VERSION}")
         self.geometry("1020x800")
         self.minsize(900, 700)
 
@@ -148,7 +148,7 @@ class App(ctk.CTk):
         header = ctk.CTkFrame(self)
         header.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
         header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(header, text="⬇️ YT Downloader  (yt-dlp)",
+        ctk.CTkLabel(header, text=f"⬇️ YT Downloader  (yt-dlp)  v{APP_VERSION}",
                      font=ctk.CTkFont(size=18, weight="bold")).grid(
             row=0, column=0, sticky="w", padx=12, pady=8)
         self.theme_menu = ctk.CTkOptionMenu(
