@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write # нужно шагу Release для создания релиза и загрузки zip
     steps:
       - uses: actions/checkout@v4
 
@@ -38,4 +40,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: YtDoWnLoAdEr-portable.zip
-          generate_release_notes: true
+          body: |
+            Portable-сборка YtDoWnLoAdEr для Windows (onedir).
+            Распакуй zip, положи `ffmpeg.exe` рядом и запускай `YtDoWnLoAdEr.exe`.
+            Full changelog: https://github.com/chumack/YtDoWnLoAdEr/commits/${{ github.ref_name }}
